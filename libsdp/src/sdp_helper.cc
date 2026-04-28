@@ -33,14 +33,17 @@
 #endif
 
 #include <vector>
+#include <complex>
 
 #include "sdp_helper.h"
 #include <rrsdp_solver.h>
 #include <bpsdp_solver.h>
+#include <complex_bpsdp_solver.h>
 
 #include "blas_helper.h"
 
 #include <pybind11/pybind11.h>
+#include <pybind11/complex.h>
 #include <pybind11/stl_bind.h>
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
@@ -83,6 +86,28 @@ void export_SDPHelper(py::module& m) {
         .def_readwrite("value", &SDPMatrix::value)
         .def_readwrite("id", &SDPMatrix::id);
 
+    // export complex SDPMatrix type
+    py::class_<ComplexSDPMatrix>(m, "complex_sdp_matrix")
+        .def(py::init<>())
+        .def_readwrite("block_number", &ComplexSDPMatrix::block_number)
+        .def_readwrite("row", &ComplexSDPMatrix::row)
+        .def_readwrite("column", &ComplexSDPMatrix::column)
+        .def_readwrite("value", &ComplexSDPMatrix::value)
+        .def_readwrite("id", &ComplexSDPMatrix::id);
+
+    m.def("complex_psd_project",
+          [](const std::vector<std::complex<double>> & u,
+             const std::vector<int> & primal_block_dim,
+             const double & mu) {
+              std::vector<std::complex<double>> x(u.size(), std::complex<double>(0.0, 0.0));
+              std::vector<std::complex<double>> z(u.size(), std::complex<double>(0.0, 0.0));
+              project_hermitian_psd_blocks(u.data(), mu, primal_block_dim, x.data(), z.data());
+              return py::make_tuple(x, z);
+          },
+          py::arg("u"),
+          py::arg("primal_block_dim"),
+          py::arg("mu") = 1.0);
+
     // export SDP solver
     py::class_<SDPHelper, std::shared_ptr<SDPHelper> >(m, "sdp_solver")
         .def(py::init<SDPOptions, std::vector<SDPMatrix> &, std::vector<int> & >())
@@ -103,6 +128,25 @@ void export_SDPHelper(py::module& m) {
         .def("get_z", &SDPHelper::get_z)
         .def("get_c", &SDPHelper::get_c)
         .def("get_mu", &SDPHelper::get_mu);
+
+    // export complex SDP solver
+    py::class_<ComplexSDPHelper, std::shared_ptr<ComplexSDPHelper> >(m, "complex_sdp_solver")
+        .def(py::init<SDPOptions, std::vector<ComplexSDPMatrix>, std::vector<int> >())
+        .def("solve",
+             [](ComplexSDPHelper& self,
+                const std::vector<double> & b,
+                const int & maxiter) {
+                 return self.solve(b, maxiter);
+             },
+             py::arg("b"),
+             py::arg("maxiter"))
+        .def("get_ATu", &ComplexSDPHelper::get_ATu)
+        .def("get_Au", &ComplexSDPHelper::get_Au)
+        .def("get_x", &ComplexSDPHelper::get_x)
+        .def("get_y", &ComplexSDPHelper::get_y)
+        .def("get_z", &ComplexSDPHelper::get_z)
+        .def("get_c", &ComplexSDPHelper::get_c)
+        .def("get_mu", &ComplexSDPHelper::get_mu);
 }
 
 PYBIND11_MODULE(_libsdp, m) {
@@ -491,6 +535,246 @@ std::vector<double> SDPHelper::get_Au(std::vector<double> u) {
 
     return Au;
 }
+
+
+/// Complex SDP callback function: Au
+static void Complex_Au_callback(double * Au, std::complex<double> * u, void * data) {
+    ComplexSDPHelper * sdp = reinterpret_cast<ComplexSDPHelper*>(data);
+    sdp->evaluate_Au(Au, u);
+}
+
+/// Complex SDP callback function: ATu
+static void Complex_ATu_callback(std::complex<double> * ATu, double * u, void * data) {
+    ComplexSDPHelper * sdp = reinterpret_cast<ComplexSDPHelper*>(data);
+    sdp->evaluate_ATu(ATu, u);
+}
+
+static void hermitize_dense_blocks(std::vector<std::complex<double>> & x,
+                                   const std::vector<int> & dims) {
+    long int off = 0;
+    for (size_t iblock = 0; iblock < dims.size(); iblock++) {
+        long int n = dims[iblock];
+        for (long int p = 0; p < n; p++) {
+            x[off + p * n + p] = std::complex<double>(std::real(x[off + p * n + p]), 0.0);
+            for (long int q = p + 1; q < n; q++) {
+                std::complex<double> v = 0.5 * (x[off + p * n + q] + std::conj(x[off + q * n + p]));
+                x[off + p * n + q] = v;
+                x[off + q * n + p] = std::conj(v);
+            }
+        }
+        off += n * n;
+    }
+}
+
+/// ComplexSDPHelper constructor
+ComplexSDPHelper::ComplexSDPHelper(SDPOptions options,
+                                   std::vector<ComplexSDPMatrix> Fi,
+                                   std::vector<int> primal_block_dim) {
+
+    options_ = options;
+
+    std::transform(options_.procedure.begin(), options_.procedure.end(), options_.procedure.begin(),
+        [](unsigned char c){ return std::tolower(c); });
+
+    std::transform(options_.algorithm.begin(), options_.algorithm.end(), options_.algorithm.begin(),
+        [](unsigned char c){ return std::tolower(c); });
+
+    std::transform(options_.guess_type.begin(), options_.guess_type.end(), options_.guess_type.begin(),
+        [](unsigned char c){ return std::tolower(c); });
+
+    n_primal_ = 0;
+    for (size_t i = 0; i < primal_block_dim.size(); i++) {
+        n_primal_ += static_cast<long int>(primal_block_dim[i]) * primal_block_dim[i];
+    }
+
+    n_dual_ = Fi.size() - 1;
+
+    c_.resize(n_primal_, std::complex<double>(0.0, 0.0));
+
+    int sign = 1;
+    if (options_.procedure == "minimize") {
+    } else if (options_.procedure == "maximize") {
+        sign = -1;
+    } else {
+        printf("\n");
+        printf("    error: invalid procedure: %s\n", options_.procedure.c_str());
+        printf("\n");
+        exit(1);
+    }
+
+    for (size_t i = 0; i < Fi[0].block_number.size(); i++) {
+        int my_block  = Fi[0].block_number[i] - 1;
+        int my_row    = Fi[0].row[i] - 1;
+        int my_column = Fi[0].column[i] - 1;
+
+        long int off = 0;
+        for (int j = 0; j < my_block; j++) {
+            off += static_cast<long int>(primal_block_dim[j]) * primal_block_dim[j];
+        }
+
+        c_[off + my_row * primal_block_dim[my_block] + my_column] += static_cast<double>(sign) * Fi[0].value[i];
+    }
+
+    for (size_t i = 1; i < Fi.size(); i++) {
+        Fi_.push_back(Fi[i]);
+
+        for (size_t j = 0; j < Fi[i].block_number.size(); j++) {
+            int my_block  = Fi[i].block_number[j] - 1;
+            int my_row    = Fi[i].row[j] - 1;
+            int my_column = Fi[i].column[j] - 1;
+
+            Fi_[i-1].block_number[j] = my_block;
+            Fi_[i-1].row[j]          = my_row;
+            Fi_[i-1].column[j]       = my_column;
+
+            long int off = 0;
+            for (int k = 0; k < my_block; k++) {
+                off += static_cast<long int>(primal_block_dim[k]) * primal_block_dim[k];
+            }
+
+            long int id = off + my_row * primal_block_dim[my_block] + my_column;
+            Fi_[i-1].id.push_back(static_cast<int>(id));
+        }
+    }
+
+    FTi_.resize(n_primal_);
+    for (size_t i = 0; i < Fi_.size(); i++) {
+        for (size_t j = 0; j < Fi_[i].block_number.size(); j++) {
+            FTi_[Fi_[i].id[j]].id.push_back(static_cast<int>(i));
+            FTi_[Fi_[i].id[j]].value.push_back(Fi_[i].value[j]);
+        }
+    }
+
+    for (size_t i = 0; i < primal_block_dim.size(); i++) {
+        primal_block_dim_.push_back(primal_block_dim[i]);
+    }
+
+    if (options_.algorithm != "bpsdp") {
+        printf("\n");
+        printf("    error: complex SDP currently supports only algorithm: bpsdp\n");
+        printf("\n");
+        exit(1);
+    }
+
+    sdp_ = std::shared_ptr<ComplexBPSDPSolver>(new ComplexBPSDPSolver(n_primal_, n_dual_, options_));
+    sdp_monitor_ = bpsdp_monitor;
+
+    x_.clear();
+    x_.resize(n_primal_, std::complex<double>(0.0, 0.0));
+
+    if (options_.guess_type == "random") {
+        srand(0);
+        for (size_t i = 0; i < static_cast<size_t>(n_primal_); i++) {
+            double re = 2.0 * ((double)rand() / RAND_MAX - 0.5) * 0.001;
+            double im = 2.0 * ((double)rand() / RAND_MAX - 0.5) * 0.001;
+            x_[i] = std::complex<double>(re, im);
+        }
+        hermitize_dense_blocks(x_, primal_block_dim_);
+    } else if (options_.guess_type == "zero") {
+        // already zero
+    } else if (options_.guess_type == "read") {
+        sdp_->read_xyz(x_.data());
+    } else {
+        printf("\n");
+        printf("    error: undefined guess type: %s\n", options_.guess_type.c_str());
+        printf("\n");
+        exit(1);
+    }
+}
+
+ComplexSDPHelper::~ComplexSDPHelper() {
+}
+
+void ComplexSDPHelper::evaluate_Au(double * Au, std::complex<double> * u) {
+#pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < Fi_.size(); i++) {
+        double dum = 0.0;
+        for (size_t j = 0; j < Fi_[i].block_number.size(); j++) {
+            dum += std::real(std::conj(Fi_[i].value[j]) * u[Fi_[i].id[j]]);
+        }
+        Au[i] = dum;
+    }
+}
+
+void ComplexSDPHelper::evaluate_ATu(std::complex<double> * ATu, double * u) {
+#pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < FTi_.size(); i++) {
+        std::complex<double> dum(0.0, 0.0);
+        for (size_t j = 0; j < FTi_[i].id.size(); j++) {
+            dum += FTi_[i].value[j] * u[FTi_[i].id[j]];
+        }
+        ATu[i] = dum;
+    }
+}
+
+std::vector<std::complex<double>> ComplexSDPHelper::solve(std::vector<double> b,
+                                                          int maxiter) {
+
+    if (options_.print_level > 0) {
+        printf("\n");
+        printf("    ==> Complex BPSDP: Hermitian boundary-point SDP <==\n");
+        printf("\n");
+        printf("      oiter");
+        printf(" iiter");
+        printf("         c.x");
+        printf("         b.y");
+        printf("    |c.x-b.y|");
+        printf("      mu");
+        printf("    ||Ax-b||");
+        printf(" ||ATy-c+z||\n");
+    }
+
+    sdp_->solve(x_.data(),
+                b.data(),
+                c_.data(),
+                primal_block_dim_,
+                maxiter,
+                Complex_Au_callback,
+                Complex_ATu_callback,
+                sdp_monitor_,
+                options_.print_level,
+                (void*)this);
+
+    if (options_.print_level > 0) {
+        printf("\n");
+        fflush(stdout);
+    }
+
+    return x_;
+}
+
+std::vector<std::complex<double>> ComplexSDPHelper::get_z() {
+    std::complex<double> * tmp_z = sdp_->get_z();
+    std::vector<std::complex<double>> z(tmp_z, tmp_z + n_primal_);
+    return z;
+}
+
+std::vector<double> ComplexSDPHelper::get_y() {
+    double * tmp_y = sdp_->get_y();
+    std::vector<double> y(tmp_y, tmp_y + n_dual_);
+    return y;
+}
+
+std::vector<std::complex<double>> ComplexSDPHelper::get_x() {
+    return x_;
+}
+
+double ComplexSDPHelper::get_mu() {
+    return sdp_->get_mu();
+}
+
+std::vector<std::complex<double>> ComplexSDPHelper::get_ATu(std::vector<double> u) {
+    std::vector<std::complex<double>> ATu(n_primal_, std::complex<double>(0.0, 0.0));
+    evaluate_ATu(ATu.data(), u.data());
+    return ATu;
+}
+
+std::vector<double> ComplexSDPHelper::get_Au(std::vector<std::complex<double>> u) {
+    std::vector<double> Au(n_dual_, 0.0);
+    evaluate_Au(Au.data(), u.data());
+    return Au;
+}
+
 
 SDPOptions options() {
     SDPOptions opt;

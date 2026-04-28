@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <climits>
 #include <cmath>
+#include <complex>
 
 namespace libsdp{
 
@@ -42,6 +43,8 @@ namespace libsdp{
 #define F_DGEMV dgemv_
 #define F_DSYEV dsyev_
 #define F_DGEEV dgeev_
+#define F_ZGEMM zgemm_
+#define F_ZHEEV zheev_
 
 extern "C" {
 
@@ -54,6 +57,8 @@ extern double F_DDOT(long int *n, double *x, long int *incx, double *y, long int
 extern double F_DNRM2(long int *n, double *x, long int *incx);
 extern void   F_DSYEV(char &JOBZ, char &UPLO, long int &N, double *A, long int &LDA, double *W, double *WORK,long int &LWORK, long int &INFO);
 extern void   F_DGEEV(char &JOBVL, char &JOBVR, long int &N, double *A, long int &LDA, double *WR, double *WI, double *VL, long int &LDVL, double *VR, long int &LDVR, double *WORK, long int &LWORK, long int &INFO);
+extern void   F_ZGEMM(char*, char*, long int*, long int*, long int*, std::complex<double>*, std::complex<double>*, long int*, std::complex<double>*, long int*, std::complex<double>*, std::complex<double>*, long int*);
+extern void   F_ZHEEV(char &JOBZ, char &UPLO, long int &N, std::complex<double> *A, long int &LDA, double *W, std::complex<double> *WORK, long int &LWORK, double *RWORK, long int &INFO);
 
 }
 
@@ -68,6 +73,11 @@ double C_DNRM2(size_t n, double* X, long int inc_x);
  */
 void Diagonalize(long int N, double *A, double *W);
 void Diagonalize_nonsym(long int N, double *A, double *W, double *VL, double *VR);
+
+/**
+ * diagonalize a complex Hermitian matrix
+ */
+void DiagonalizeHermitian(long int N, std::complex<double> *A, double *W);
 
 
 } // end of namespace

@@ -32,6 +32,7 @@
 
 #include<vector>
 #include<memory>
+#include<complex>
 
 #include<sdp_solver.h>
 
@@ -48,6 +49,87 @@ struct SDPMatrix {
     /// composite index, accounting for row, column, block offset
     std::vector<int> id;
 };
+
+
+/// a constraint matrix in sparse SDPA format with complex values
+struct ComplexSDPMatrix {
+    ComplexSDPMatrix(){};
+    std::vector<int> block_number;
+    std::vector<int> row;
+    std::vector<int> column;
+    std::vector<std::complex<double>> value;
+
+    /// composite index, accounting for row, column, block offset
+    std::vector<int> id;
+};
+
+class ComplexBPSDPSolver;
+
+class ComplexSDPHelper{
+
+  public:
+
+    /// ComplexSDPHelper constructor
+    ComplexSDPHelper(SDPOptions options,
+                     std::vector<ComplexSDPMatrix> Fi,
+                     std::vector<int> primal_block_dim);
+
+    /// ComplexSDPHelper destructor
+    ~ComplexSDPHelper();
+
+    /// solve the complex Hermitian SDP problem and return the primal solution
+    std::vector<std::complex<double>> solve(std::vector<double> b,
+                                            int maxiter);
+
+    /// evaluate Au = Re Tr(A_i^H u)
+    void evaluate_Au(double * Au, std::complex<double> * u);
+
+    /// evaluate ATu = sum_i u_i A_i
+    void evaluate_ATu(std::complex<double> * ATu, double * u);
+
+    /// return the BPSDP penalty parameter, mu
+    double get_mu();
+
+    /// return the BPSDP dual z vector
+    std::vector<std::complex<double>> get_z();
+
+    /// return the BPSDP primal x vector
+    std::vector<std::complex<double>> get_x();
+
+    /// return the BPSDP dual y vector
+    std::vector<double> get_y();
+
+    /// return the c vector
+    std::vector<std::complex<double>> get_c() { return c_; }
+
+    /// get ATu
+    std::vector<std::complex<double>> get_ATu(std::vector<double> u);
+
+    /// get Au
+    std::vector<double> get_Au(std::vector<std::complex<double>> u);
+
+  protected:
+
+    /// the complex SDP solver
+    std::shared_ptr<ComplexBPSDPSolver> sdp_;
+
+    /// options for the SDP
+    SDPOptions options_;
+
+    long int n_primal_;
+    long int n_dual_;
+
+    std::vector<ComplexSDPMatrix> Fi_;
+    std::vector<ComplexSDPMatrix> FTi_;
+
+    std::vector<int> primal_block_dim_;
+
+    std::vector<std::complex<double>> c_;
+    std::vector<std::complex<double>> x_;
+
+    libsdp::SDPProgressMonitorFunction sdp_monitor_;
+};
+
 
 class SDPHelper{
 

@@ -74,6 +74,12 @@ void CGSolver::solve(double * Ap,
     C_DCOPY(n_,r_,1,p_,1);
 
     iter_ = 0;
+
+    // If the incoming guess already solves the CG system, do not enter the
+    // loop.  The old code divided 0 / 0 in this perfectly valid case.
+    double rr0 = C_DDOT(n_,r_,1,r_,1);
+    if ( sqrt(rr0) < cg_convergence_ ) return;
+
     do {
 
         // call some function to evaluate A.p.  Result in Ap
@@ -81,6 +87,7 @@ void CGSolver::solve(double * Ap,
 
         double rr  = C_DDOT(n_,r_,1,r_,1);
         double pap = C_DDOT(n_,p_,1,Ap,1);
+        if ( fabs(pap) < 1.0e-30 ) break;
         double alpha = rr / pap;
         C_DAXPY(n_,alpha,p_,1,x,1);
         C_DAXPY(n_,-alpha,Ap,1,r_,1);
@@ -88,8 +95,8 @@ void CGSolver::solve(double * Ap,
         // if r is sufficiently small, then exit loop
         double rrnew = C_DDOT(n_,r_,1,r_,1);
         double nrm = sqrt(rrnew);
-        double beta = rrnew/rr;
         if ( nrm < cg_convergence_ ) break;
+        double beta = rrnew/rr;
 
         C_DSCAL(n_,beta,p_,1);
         C_DAXPY(n_,1.0,r_,1,p_,1);

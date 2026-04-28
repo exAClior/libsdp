@@ -180,6 +180,48 @@ void Diagonalize_nonsym(long int N, double* A, double* W, double *VL, double * V
     free(WI);
 }
 
+
+/**
+ *  Diagonalize a complex Hermitian matrix.  A is column-major on entry and is
+ *  overwritten with eigenvectors, matching LAPACK zheev semantics.
+ */
+void DiagonalizeHermitian(long int N, std::complex<double>* A, double* W) {
+    char JOBZ = 'V';
+    char UPLO = 'U';
+    long int LDA = N;
+    long int INFO = 0;
+
+    long int LRWORK = 3 * N - 2;
+    if (LRWORK < 1) LRWORK = 1;
+    double* RWORK = (double*)malloc(LRWORK * sizeof(double));
+
+    long int LWORK = -1;
+    std::complex<double> WORK_QUERY;
+    F_ZHEEV(JOBZ, UPLO, N, A, LDA, W, &WORK_QUERY, LWORK, RWORK, INFO);
+    if (INFO != 0) {
+        printf("\n");
+        printf("    error: zheev workspace query failed with INFO = %li\n", INFO);
+        printf("\n");
+        exit(1);
+    }
+
+    LWORK = static_cast<long int>(std::real(WORK_QUERY));
+    if (LWORK < 1) LWORK = 1;
+    std::complex<double>* WORK = (std::complex<double>*)malloc(LWORK * sizeof(std::complex<double>));
+
+    F_ZHEEV(JOBZ, UPLO, N, A, LDA, W, WORK, LWORK, RWORK, INFO);
+    if (INFO != 0) {
+        printf("\n");
+        printf("    error: zheev failed with INFO = %li\n", INFO);
+        printf("\n");
+        exit(1);
+    }
+
+    free(WORK);
+    free(RWORK);
+}
+
+
 /**
  *  Diagonalize a real symmetric matrix
  */

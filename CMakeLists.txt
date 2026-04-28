@@ -78,6 +78,7 @@ if ( BUILD_PYTHON_INTERFACE )
         libsdp/src/cg_solver.cc 
         libsdp/src/sdp_solver.cc 
         libsdp/src/bpsdp_solver.cc 
+        libsdp/src/complex_bpsdp_solver.cc
         libsdp/src/rrsdp_solver.cc
         libsdp/src/sdp_helper.cc)
     
@@ -134,15 +135,22 @@ else()
         libsdp/include/sdp_solver.h
         libsdp/include/rrsdp_solver.h 
         libsdp/include/bpsdp_solver.h 
+        libsdp/include/complex_bpsdp_solver.h
         libsdp/src/blas_helper.cc 
         libsdp/src/lbfgs_helper.cc 
         libsdp/src/cg_solver.cc 
         libsdp/src/sdp_solver.cc 
         libsdp/src/bpsdp_solver.cc 
+        libsdp/src/complex_bpsdp_solver.cc
         libsdp/src/rrsdp_solver.cc)
     
     # libsdp headers
     target_include_directories(sdp PUBLIC "${PROJECT_SOURCE_DIR}/libsdp/include")
+
+    # bpsdp_solver.cc and rrsdp_solver.cc include pybind11 headers.
+    find_package(Python3 REQUIRED COMPONENTS Development)
+    target_include_directories(sdp PRIVATE ${Python3_INCLUDE_DIRS})
+    target_link_libraries(sdp PRIVATE Python3::Python)
 
     # BLAS
 
@@ -153,7 +161,7 @@ else()
     if (MKL_FOUND)
         message(STATUS "MKL found via CMake config.")
         set(USE_MKL ON)
-        target_link_libraries(_libsdp PRIVATE MKL::MKL)
+        target_link_libraries(sdp PRIVATE MKL::MKL)
     
     elseif(DEFINED ENV{MKLROOT})
         # Manually link to MKL if MKLROOT is set
@@ -163,7 +171,7 @@ else()
         set(MKLROOT $ENV{MKLROOT})
         set(MKL_LIB_DIR "${MKLROOT}/lib/intel64")
     
-        target_link_libraries(_libsdp PRIVATE
+        target_link_libraries(sdp PRIVATE
             -Wl,--start-group
             ${MKL_LIB_DIR}/libmkl_intel_lp64.a
             ${MKL_LIB_DIR}/libmkl_core.a
@@ -174,7 +182,7 @@ else()
     else()
         message(STATUS "MKL not found. Falling back to generic BLAS.")
         find_package(BLAS REQUIRED)
-        target_link_libraries(_libsdp PRIVATE ${BLAS_LIBRARIES})
+        target_link_libraries(sdp PRIVATE ${BLAS_LIBRARIES})
     endif()
     
     # liblbfgs
@@ -182,7 +190,7 @@ else()
     add_subdirectory(libsdp/external)
     target_link_libraries(sdp PUBLIC LBFGS::lib)
 
-    set_target_properties(sdp PROPERTIES PUBLIC_HEADER "libsdp/include/sdp_solver.h;libsdp/include/rrsdp_solver.h;libsdp/include/bpsdp_solver.h")
+    set_target_properties(sdp PROPERTIES PUBLIC_HEADER "libsdp/include/sdp_solver.h;libsdp/include/rrsdp_solver.h;libsdp/include/bpsdp_solver.h;libsdp/include/complex_bpsdp_solver.h")
     
     install(TARGETS sdp
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
