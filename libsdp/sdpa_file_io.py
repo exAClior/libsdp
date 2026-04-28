@@ -1,7 +1,7 @@
 import numpy as np
 import math
 
-from libsdp.sdp_helper import sdp_matrix
+from libsdp.sdp_helper import sdp_matrix, complex_sdp_matrix
 
 def read_sdpa_problem(filename):
 
@@ -250,6 +250,64 @@ def clean_sdpa_problem(c, Fi):
             new_c.append(c[mi-1])
 
     return new_c, new_F
+
+
+def clean_complex_sdpa_problem(c, Fi):
+    """
+    Clean a complex Hermitian SDP problem by merging repeated sparse entries
+    and dropping constraints that reduce to 0 = 0.
+
+    :param c: the constraint vector, excluding the objective row
+
+    :param Fi: a list of complex_sdp_matrix objects. Fi[0] is the objective;
+               Fi[1:] are the equality constraint rows.
+
+    :return c: a pruned constraint vector
+
+    :return Fi: a pruned list of complex_sdp_matrix objects
+    """
+
+    new_F = []
+    new_c = []
+    for mi in range(len(Fi)):
+        unique_vals = defaultdict(lambda: 0.0 + 0.0j)
+        for j in range(len(Fi[mi].row)):
+            key = (Fi[mi].block_number[j], Fi[mi].row[j], Fi[mi].column[j])
+            unique_vals[key] += Fi[mi].value[j]
+
+        F = complex_sdp_matrix()
+        for key, val in unique_vals.items():
+            if math.isclose(abs(val), 0.0, abs_tol=1.0E-14):
+                continue
+            bn, rval, cval = key
+            F.block_number.append(bn)
+            F.row.append(rval)
+            F.column.append(cval)
+            F.value.append(val)
+
+        # Such constraints look like 0 = 0.  Keep the objective row protected,
+        # and reject inconsistent zero-left-hand-side constraints.
+        if len(F.row) == 0:
+            if mi == 0:
+                print('')
+                print('    error, objective function is 0')
+                print('')
+                exit()
+            else:
+                if not math.isclose(c[mi-1], 0.0, abs_tol=1.0E-14):
+                    print('')
+                    print('    error, constraint 0 = %f cannot be satisfied' % (c[mi-1]))
+                    print('')
+                    exit()
+
+            continue
+
+        new_F.append(F)
+        if mi > 0:
+            new_c.append(c[mi-1])
+
+    return new_c, new_F
+
 
 def read_xyz(filename):
 
